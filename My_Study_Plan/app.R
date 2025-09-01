@@ -1,5 +1,5 @@
 # ========================
-# Graduate Study Planner - Professional Minimalist Design (v2)
+# Graduate Study Planner
 # ========================
 
 # ---- Packages ----
@@ -39,9 +39,9 @@ ui <- dashboardPage(
                   accept = c(".csv"),
                   buttonLabel = "Browse",
                   placeholder = "No file selected"),
-        div(style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px;",
-            downloadButton("download_template", "Template", class = "btn btn-outline-light btn-sm"),
-            downloadButton("download_data", "Export CSV", class = "btn btn-success btn-sm")
+        # Sidebar: Template button only (removed broken Export CSV here)
+        div(style="display:grid; grid-template-columns:1fr; margin-top:8px;",
+            downloadButton("download_template", "Template", class = "btn btn-outline-light btn-sm")
         )
       )
     )
@@ -282,8 +282,8 @@ ui <- dashboardPage(
                 div(class = "progress-label", "Completion Rate")
             ),
             div(class = "progress-card",
-                div(class = "progress-number", textOutput("avg_credits_per_term")),
-                div(class = "progress-label", "Avg Credits/Term")
+                div(class = "progress-number", textOutput("avg_credits_per_semester")),
+                div(class = "progress-label", "Avg Credits/Semester")
             ),
             div(class = "progress-card",
                 div(class = "progress-number", textOutput("projected_graduation")),
@@ -339,14 +339,31 @@ ui <- dashboardPage(
         tabName = "help",
         box(width = 12, title = "How to Use This Planner", status = "primary",
             HTML("
-              <ol style='line-height:1.7'>
-                <li><b>Course Planning:</b> Add courses on the left, then manage them in the Course Schedule table.</li>
-                <li><b>Grades & Completion:</b> Mark a course as Completed to enable Grade; GPA updates automatically.</li>
-                <li><b>Categories/Tags:</b> Create your own (e.g., Core, Methods, Elective) to power analytics and exports.</li>
-                <li><b>Analytics:</b> Use the timeline, trends, and category bars to monitor pace and balance.</li>
-                <li><b>Timeline:</b> Click <i>Auto-Fill</i> to infer key milestones from your data, then tweak if needed.</li>
-                <li><b>Save/Restore:</b> The app autosaves to your browser (localStorage). Use CSV export as a backup.</li>
-                <li><b>Export:</b> Generate a Word Plan of Study grouped by categories, plus a CSV of your data.</li>
+              <ol style='line-height:1.8'>
+                <li><b>Add courses:</b> Go to <i>Course Planning</i>. Choose the <b>Academic Year</b>, <b>Semester</b> (Spring, Summer, Fall),
+                    enter <b>Course Name</b>, <b>Code</b>, <b>Credits</b>, and optional <b>Categories</b> (e.g., Core, Methods, Elective).
+                    Click <b>Add Course</b>.</li>
+                <li><b>Mark completion & grades:</b> Toggle <b>Completed</b> and select a <b>Grade</b>. 
+                    The <b>GPA</b> and <b>Completed/Pending credits</b> update instantly on the Dashboard.</li>
+                <li><b>Edit or remove:</b> Select a row in <i>Course Schedule</i> then click <b>Edit Selected</b> or <b>Remove</b>.
+                    Inline edits are allowed for <i>Credits</i>, <i>Completed</i>, and <i>Grade</i>.</li>
+                <li><b>Categories (Tags):</b> Use categories to group courses for analytics and exports.
+                    You can type new categories on the fly; they automatically appear for future selection.</li>
+                <li><b>Import data:</b> Click <b>Import Data</b> (CSV with columns:
+                    Semester, CalendarYear, Course, Code, Credit, Grade, Tags). 
+                    <i>Completed</i> is <u>inferred</u> from <b>Grade</b> (any valid grade means completed).
+                    Tags can be separated by commas or semicolons.</li>
+                <li><b>Export:</b> In <i>Export & Timeline</i>, download your data as CSV or a Word <b>Plan of Study</b>, grouped by category.</li>
+                <li><b>Timeline & milestones:</b> Fill fields or click <b>Auto-Fill</b> to infer milestones (admit, coursework completion, dissertation, etc.) from your data. Adjust as needed.</li>
+                <li><b>Analytics:</b>
+                  <ul>
+                    <li><i>Academic Progress Overview</i> shows completed vs planned credits by <b>semester</b>.</li>
+                    <li><i>Performance Trends</i> shows semester GPA with a smooth trend line (bubble size = credits taken).</li>
+                    <li><i>Category Credits</i> stacks completed and planned credits per category.</li>
+                  </ul>
+                </li>
+                <li><b>Autosave & reset:</b> The app autosaves to your browser. Use the <b>Reset All Data</b> button on the Dashboard to clear everything.</li>
+                <li><b>Best practices:</b> Keep categories consistent; enter grades promptly so GPA and projections stay accurate; export regularly.</li>
               </ol>
             ")
         ),
@@ -363,13 +380,13 @@ server <- function(input, output, session) {
   
   # ---- Semester ordering (Spring before Fall; Summer in the middle) ----
   SEM_ORDER <- c("Spring","Summer","Fall")
-  term_order <- c("Spring"=1, "Summer"=2, "Fall"=3)
+  sem_order_index <- c("Spring"=1, "Summer"=2, "Fall"=3)
   
-  normalize_term <- function(x) {
+  normalize_sem <- function(x) {
     factor(as.character(x), levels = SEM_ORDER, ordered = TRUE)
   }
-  term_key <- function(sem, yr) {
-    s <- unname(term_order[as.character(sem)] %||% 4L)
+  sem_key <- function(sem, yr) {
+    s <- unname(sem_order_index[as.character(sem)] %||% 4L)
     as.numeric(yr) * 10 + as.numeric(s)
   }
   
@@ -419,12 +436,12 @@ server <- function(input, output, session) {
     paste0(round(completed/total * 100), "%")
   }
   
-  get_avg_credits_per_term <- function(data) {
+  get_avg_credits_per_semester <- function(data) {
     if (nrow(data) == 0) return("0")
-    terms <- data %>%
+    sems <- data %>%
       group_by(CalendarYear, Semester) %>%
       summarise(total_credits = sum(Credit, na.rm = TRUE), .groups = "drop")
-    round(mean(terms$total_credits, na.rm = TRUE), 1)
+    round(mean(sems$total_credits, na.rm = TRUE), 1)
   }
   
   estimate_graduation <- function(data) {
@@ -443,7 +460,7 @@ server <- function(input, output, session) {
     
     d <- course_data()
     if (nrow(d) && any(d$Semester==input$semester & d$CalendarYear==input$calendar_year & d$Code==input$course_code)) {
-      showNotification("This course already exists for that term.", type = "warning")
+      showNotification("This course already exists for that semester.", type = "warning")
       return()
     }
     
@@ -549,7 +566,7 @@ server <- function(input, output, session) {
       value = sum(as.numeric(d$Credit[d$Completed %in% FALSE]), na.rm = TRUE),
       subtitle = "Pending Credits",
       icon = icon("clock"),
-      color = "yellow"  # valid shinydashboard color
+      color = "yellow"
     )
   })
   
@@ -569,8 +586,8 @@ server <- function(input, output, session) {
     get_completion_rate(course_data())
   })
   
-  output$avg_credits_per_term <- renderText({
-    get_avg_credits_per_term(course_data())
+  output$avg_credits_per_semester <- renderText({
+    get_avg_credits_per_semester(course_data())
   })
   
   output$projected_graduation <- renderText({
@@ -583,23 +600,23 @@ server <- function(input, output, session) {
     if (nrow(d) == 0) return(NULL)
     
     yrs <- seq(min(d$CalendarYear), max(d$CalendarYear))
-    complete_terms <- expand.grid(CalendarYear = yrs, Semester = SEM_ORDER) %>%
+    complete_semesters <- expand.grid(CalendarYear = yrs, Semester = SEM_ORDER) %>%
       arrange(CalendarYear, match(Semester, SEM_ORDER)) %>%
-      mutate(Term = paste(Semester, CalendarYear))
+      mutate(SemesterLabel = paste(Semester, CalendarYear))
     
     progress_data <- d %>%
       group_by(CalendarYear, Semester) %>%
       summarise(Completed = sum(Credit[Completed], na.rm=TRUE),
                 Pending   = sum(Credit[!Completed], na.rm=TRUE), .groups="drop") %>%
-      right_join(complete_terms, by = c("CalendarYear","Semester")) %>%
+      right_join(complete_semesters, by = c("CalendarYear","Semester")) %>%
       mutate(across(c(Completed, Pending), ~replace_na(.x, 0))) %>%
       pivot_longer(c(Completed, Pending), names_to="Status", values_to="Credits") %>%
       filter(Credits > 0) %>%
-      mutate(Term = factor(Term, levels = complete_terms$Term))
+      mutate(SemesterLabel = factor(SemesterLabel, levels = complete_semesters$SemesterLabel))
     
     if (!nrow(progress_data)) return(NULL)
     
-    ggplot(progress_data, aes(x = Term, y = Credits, fill = Status)) +
+    ggplot(progress_data, aes(x = SemesterLabel, y = Credits, fill = Status)) +
       geom_col() +
       scale_fill_manual(values = c(Completed="#27ae60", Pending="#f39c12")) +
       theme_minimal() +
@@ -635,19 +652,19 @@ server <- function(input, output, session) {
     if (nrow(d) == 0) return(NULL)
     
     timeline_data <- d %>%
-      mutate(term_key = term_key(Semester, CalendarYear)) %>%
+      mutate(sem_key = sem_key(Semester, CalendarYear)) %>%
       arrange(CalendarYear, match(Semester, SEM_ORDER)) %>%
       mutate(
         cumulative_credits = cumsum(ifelse(Completed, Credit, 0)),
         total_planned = cumsum(Credit),
-        Term = paste(Semester, CalendarYear)
+        SemesterLabel = paste(Semester, CalendarYear)
       )
     
     yrs <- seq(min(timeline_data$CalendarYear), max(timeline_data$CalendarYear))
-    all_terms <- as.vector(sapply(yrs, function(y) paste(SEM_ORDER, y)))
-    timeline_data$Term <- factor(timeline_data$Term, levels = all_terms)
+    all_semesters <- as.vector(sapply(yrs, function(y) paste(SEM_ORDER, y)))
+    timeline_data$SemesterLabel <- factor(timeline_data$SemesterLabel, levels = all_semesters)
     
-    ggplot(timeline_data, aes(x = Term)) +
+    ggplot(timeline_data, aes(x = SemesterLabel)) +
       geom_line(aes(y = cumulative_credits, color = "Completed"), linewidth = 1.2, group=1) +
       geom_line(aes(y = total_planned, color = "Planned"), linewidth = 1, linetype = "dashed", group=1) +
       scale_color_manual(values = c("Completed"="#27ae60", "Planned"="#95a5a6")) +
@@ -668,21 +685,21 @@ server <- function(input, output, session) {
     perf <- d %>%
       filter(Completed, !is.na(Grade), Grade %in% names(pts)) %>%
       mutate(grade_val = pts[Grade],
-             term_key = term_key(Semester, CalendarYear)) %>%
+             skey = sem_key(Semester, CalendarYear)) %>%
       arrange(CalendarYear, match(Semester, SEM_ORDER)) %>%
       group_by(CalendarYear, Semester) %>%
-      summarise(term_gpa = weighted.mean(grade_val, Credit, na.rm=TRUE),
+      summarise(semester_gpa = weighted.mean(grade_val, Credit, na.rm=TRUE),
                 credits = sum(Credit, na.rm=TRUE),
                 .groups="drop") %>%
-      mutate(Term = paste(Semester, CalendarYear))
+      mutate(SemesterLabel = paste(Semester, CalendarYear))
     
     if (!nrow(perf)) return(NULL)
     
     yrs <- seq(min(perf$CalendarYear), max(perf$CalendarYear))
-    all_terms <- as.vector(sapply(yrs, function(y) paste(SEM_ORDER, y)))
-    perf$Term <- factor(perf$Term, levels = all_terms)
+    all_semesters <- as.vector(sapply(yrs, function(y) paste(SEM_ORDER, y)))
+    perf$SemesterLabel <- factor(perf$SemesterLabel, levels = all_semesters)
     
-    ggplot(perf, aes(x = Term, y = term_gpa, group = 1)) +
+    ggplot(perf, aes(x = SemesterLabel, y = semester_gpa, group = 1)) +
       geom_hline(yintercept = 3.0, linetype = "dashed", color = "#e74c3c", alpha = 0.5) +
       geom_hline(yintercept = 3.5, linetype = "dashed", color = "#27ae60", alpha = 0.5) +
       geom_point(aes(size = credits), alpha = 0.85) +
@@ -734,9 +751,9 @@ server <- function(input, output, session) {
     }
     
     disp <- d %>%
-      mutate(term_key = term_key(Semester, CalendarYear)) %>%
-      arrange(desc(term_key)) %>%  # Most recent first by new term order
-      select(-term_key)
+      mutate(sem_key = sem_key(Semester, CalendarYear)) %>%
+      arrange(desc(sem_key)) %>%  # Most recent first by new semester order
+      select(-sem_key)
     
     disp$TagsTxt <- vapply(disp$Tags, function(x) paste(x, collapse = ", "), "")
     disp$Credit  <- as.numeric(disp$Credit)
@@ -769,7 +786,8 @@ server <- function(input, output, session) {
       )
   })
   
-  next_term_keys <- function(k, n=2) {
+  next_semester_keys <- function(k, n=3) {
+    # Return the next n semester keys after key k
     out <- integer(n)
     year <- floor(k / 10); semi <- k %% 10
     for (i in seq_len(n)) {
@@ -783,38 +801,38 @@ server <- function(input, output, session) {
   output$recent_activity <- DT::renderDataTable({
     d <- course_data()
     if (!nrow(d)) {
-      empty_df <- data.frame(Status=character(),Course=character(),Credits=numeric(),Term=character(), stringsAsFactors = FALSE)
+      empty_df <- data.frame(Status=character(),Course=character(),Credits=numeric(),Semester=character(), stringsAsFactors = FALSE)
       return(DT::datatable(empty_df, options = list(dom = 't'), rownames = FALSE))
     }
     
     d <- d %>%
-      mutate(term_key = term_key(Semester, CalendarYear),
-             Term = paste(Semester, CalendarYear))
+      mutate(sem_key = sem_key(Semester, CalendarYear),
+             SemesterText = paste(Semester, CalendarYear))
     
     last_completed <- d %>%
       filter(Completed) %>%
-      arrange(desc(term_key)) %>%
+      arrange(desc(sem_key)) %>%
       slice_head(n=1)
     
     if (nrow(last_completed)) {
-      nxt_keys <- next_term_keys(last_completed$term_key[1], n=2)
+      nxt_keys <- next_semester_keys(last_completed$sem_key[1], n=3)  # show next three semesters
       recent <- d %>%
-        filter(!Completed, term_key %in% nxt_keys) %>%
-        arrange(term_key, desc(Credit)) %>%
+        filter(!Completed, sem_key %in% nxt_keys) %>%
+        arrange(sem_key, desc(Credit)) %>%
         mutate(Status = "⏳ Upcoming") %>%
-        select(Status, Course, Credit, Term)
+        select(Status, Course, Credit, Semester = SemesterText)
       
       if (!nrow(recent)) {
-        recent <- data.frame(Status=character(), Course=character(), Credit=numeric(), Term=character(), stringsAsFactors = FALSE)
+        recent <- data.frame(Status=character(), Course=character(), Credit=numeric(), Semester=character(), stringsAsFactors = FALSE)
       }
     } else {
-      keys <- sort(unique(d$term_key))
-      target <- head(keys, 2)
+      keys <- sort(unique(d$sem_key))
+      target <- head(keys, 3)
       recent <- d %>%
-        filter(!Completed, term_key %in% target) %>%
-        arrange(term_key, desc(Credit)) %>%
+        filter(!Completed, sem_key %in% target) %>%
+        arrange(sem_key, desc(Credit)) %>%
         mutate(Status = "⏳ Upcoming") %>%
-        select(Status, Course, Credit, Term)
+        select(Status, Course, Credit, Semester = SemesterText)
     }
     
     DT::datatable(
@@ -825,7 +843,7 @@ server <- function(input, output, session) {
         scrollX = TRUE
       ),
       rownames = FALSE,
-      colnames = c("Status", "Course", "Credits", "Term")
+      colnames = c("Status", "Course", "Credits", "Semester")
     ) %>%
       DT::formatStyle(
         'Status',
@@ -986,30 +1004,29 @@ server <- function(input, output, session) {
     }
     
     dt <- d %>% mutate(
-      term_key = term_key(Semester, CalendarYear),
+      sem_key = sem_key(Semester, CalendarYear),
       has_diss = vapply(Tags, function(x) any(str_detect(tolower(x), "diss|dissertation|thesis")), FALSE)
     )
     
-    # Date Admitted (earliest term)
+    # Date Admitted (earliest semester)
     min_year <- min(dt$CalendarYear, na.rm = TRUE)
     dt_min_year <- dt %>% filter(CalendarYear == min_year)
     if (nrow(dt_min_year)) {
-      # first by SEM_ORDER
-      sem_min <- dt_min_year$Semester[which.min(term_key(dt_min_year$Semester, dt_min_year$CalendarYear))]
+      sem_min <- dt_min_year$Semester[which.min(sem_key(dt_min_year$Semester, dt_min_year$CalendarYear))]
       admit <- paste(sem_min, min_year)
     } else admit <- as.character(min_year)
     
     # Coursework completion (last non-dissertation course)
     diss_rows <- dt %>% filter(has_diss)
-    first_diss_key <- if (nrow(diss_rows)) min(diss_rows$term_key, na.rm = TRUE) else Inf
-    pre_diss <- dt %>% filter(term_key < first_diss_key)
+    first_diss_key <- if (nrow(diss_rows)) min(diss_rows$sem_key, na.rm = TRUE) else Inf
+    pre_diss <- dt %>% filter(sem_key < first_diss_key)
     if (nrow(pre_diss)) {
-      i <- which.max(pre_diss$term_key)
+      i <- which.max(pre_diss$sem_key)
       coursework <- paste(pre_diss$Semester[i], pre_diss$CalendarYear[i])
     } else {
       ref <- dt %>% filter(!has_diss)
       if (nrow(ref)) {
-        i <- which.max(ref$term_key)
+        i <- which.max(ref$sem_key)
         coursework <- paste(ref$Semester[i], ref$CalendarYear[i])
       } else {
         coursework <- admit
@@ -1018,20 +1035,19 @@ server <- function(input, output, session) {
     
     # Dissertation completion (last dissertation course)
     if (nrow(diss_rows)) {
-      i <- which.max(diss_rows$term_key)
-      dissertation <- paste(diss_rows$Semester[i], d$CalendarYear[i])
+      i <- which.max(diss_rows$sem_key)
       dissertation <- paste(diss_rows$Semester[i], diss_rows$CalendarYear[i])
     } else {
-      i <- which.max(dt$term_key)
+      i <- which.max(dt$sem_key)
       dissertation <- paste(dt$Semester[i], dt$CalendarYear[i])
     }
     
-    # Residency: count terms chronologically
-    current_terms <- dt %>%
+    # Residency: count semesters chronologically
+    current_semesters <- dt %>%
       select(CalendarYear, Semester) %>%
       distinct() %>%
       arrange(CalendarYear, match(Semester, SEM_ORDER))
-    residency <- if (nrow(current_terms) > 0) nrow(current_terms) else ""
+    residency <- if (nrow(current_semesters) > 0) nrow(current_semesters) else ""
     
     hours_completed <- sum(as.numeric(dt$Credit[dt$Completed %in% TRUE]), na.rm = TRUE)
     
